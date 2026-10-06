@@ -1,0 +1,7 @@
+flowchart BT
+  standard[aud_midi_standard]
+  core[aud_midi_core] --> standard
+  rtp[aud_midi_rtp] --> standard
+  network[aud_midi_network] --> core & rtp
+  backends[apple, android, windows, linux, web] --> core
+  umbrella[aud_midi] --> network & backends
