@@ -11,6 +11,7 @@
 - Upgrade dependencies
 - Move the plan to aud_midi_pm
 - Rename the PM repo to aud_midi_pm and move the plan there
+- Plan BLE peripheral support
 
 ## 0.0.0 - 2026-10-06
 
