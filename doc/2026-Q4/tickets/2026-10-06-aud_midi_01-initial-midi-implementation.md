@@ -533,7 +533,51 @@ flowchart TB
 - Sub-APIs: `virtualPorts.createSource/createDestination(name, uniqueId:)`,
   `bluetooth.scan(): Stream<MidiBlePeripheral>` + `connect({timeout})`
   returning the resulting ports, `network.enable(name:)`,
-  `network.connect(host, port): Future<MidiNetworkConnection>`.
+  `network.connect(host, port): Future<MidiNetworkConnection>`,
+  `bluetooth.advertise(name:) : Future<MidiBlePeripheralPort>` (the app as
+  a BLE-MIDI peripheral, see "BLE peripheral" below).
+
+### BLE peripheral (the app as a BLE-MIDI device)
+
+The app advertises the standard BLE-MIDI GATT service and a central (a
+Mac, an iPad, a DAW, a phone) connects to it. In scope for all
+platforms except Web.
+
+- **Wire format:** BLE-MIDI service `03B80E5A-EDE8-4B33-A751-6CE34EC4C700`,
+  one characteristic `7772E5DB-3868-4112-A1A9-F2669D106BF3` (read,
+  write without response, notify). Packet framing with timestamp bytes
+  and sysex continuation is the same pure-Dart codec as for the central
+  role and lives in `aud_midi_standard`; negotiated MTU decides the
+  packet size.
+- **Result is our own port**, not an OS device: `bluetooth.advertise()`
+  yields a `MidiBlePeripheralPort` (an input and an output, `isOwn`,
+  transport `bluetoothLe`) that behaves like any virtual port, plus a
+  stream of connected centrals. The OS MIDI stack does not see it, so
+  other apps on the same machine cannot use it; apps on the central use
+  the app's data directly.
+- **Apple:** `CBPeripheralManager` with the service, advertising,
+  notifications via `updateValue`. `CABTMIDILocalPeripheralViewController`
+  is UIKit and stays out of the Dart-only scope.
+- **Android:** `BluetoothGattServer` and `BluetoothLeAdvertiser`; the
+  abstract `BluetoothGattServerCallback` and `AdvertiseCallback` are
+  covered by the Java shim. Needs `BLUETOOTH_ADVERTISE` and
+  `BLUETOOTH_CONNECT` (API 31+), `BLUETOOTH_ADMIN` and location below.
+- **Linux:** BlueZ `GattManager1` and `LEAdvertisingManager1` over D-Bus
+  with the `dbus` package, exporting the service objects from Dart.
+- **Windows:** `GattServiceProvider` (Windows.Devices.Bluetooth.
+  GenericAttributeProfile) in the C++/WinRT shim; peripheral support
+  depends on the Bluetooth adapter and is detected at runtime.
+- **Models and capabilities:** `MidiBlePeripheralSpec` (name, service
+  data), `MidiBleCentralInfo` (id, name, mtu, state),
+  `MidiCapabilities.blePeripheral`.
+- **Permissions:** iOS `NSBluetoothAlwaysUsageDescription` plus
+  `UIBackgroundModes` `bluetooth-peripheral` for background advertising;
+  macOS Bluetooth entitlement; Android as above; Linux access to the
+  BlueZ D-Bus service; Windows Bluetooth capability for MSIX.
+- **Risks to settle in the spikes:** pairing and bonding behaviour of
+  Apple centrals against a non-CoreMIDI peripheral, connection interval
+  and latency, Android devices without peripheral advertising support,
+  Windows adapters without the peripheral role.
 
 ### Device and port models (module `model/` of `aud_midi_standard`)
 
@@ -581,7 +625,7 @@ backend; the `native` map never leaks into equality.
 | --- | --- | --- | --- | --- | --- |
 | OS-exposed ports (USB, other apps' virtual, OS-paired BLE) | CoreMIDI | MidiManager + AMidi/Java | Windows.Devices.Midi | ALSA sequencer (also PipeWire/JACK bridges) | Web MIDI (Chromium, Firefox; no Safari) |
 | BLE central | CoreBluetooth + `MIDIBluetoothDriverActivateAllConnections` (iOS 16 / macOS 13; older: OS UI) | BluetoothLeScanner + `openBluetoothDevice` (shim) | OS pairing or in-app pairing API; WMS BLE preview, runtime-detected | `bluez` (D-Bus) + own BLE-MIDI codec; BlueZ MIDI profile only if distro enables it | macOS/Windows OS-paired only, none on Android |
-| BLE peripheral | deferred | deferred | – | deferred (BlueZ GATT server) | – |
+| BLE peripheral (in scope) | own GATT server via `CBPeripheralManager` (iOS, macOS), data handled by our own port | `BluetoothGattServer` + `BluetoothLeAdvertiser` via the Java shim (`BLUETOOTH_ADVERTISE`, API 31+) | WinRT `GattServiceProvider` in the C++/WinRT shim, runtime-detected | BlueZ GATT server and advertising D-Bus API | – (Web Bluetooth is central only) |
 | Virtual endpoints | dynamic (`MIDISourceCreate`…) | static, `MidiDeviceService` shim + manifest, app must run | WMS virtual device: preview, runtime-detected; else unsupported | dynamic (`snd_seq_create_simple_port`) | – |
 | Network session | `MIDINetworkSession` (AppleMIDI, OS Bonjour) | pure-Dart AppleMIDI, `NsdManager` advertise, `MulticastLock` | pure-Dart AppleMIDI, `DnsServiceRegister` advertise | pure-Dart AppleMIDI, Avahi D-Bus advertise | – |
 | Hotplug | notifications | `DeviceCallback` shim or polling | `DeviceWatcher` | announce port events | `onstatechange` |
@@ -780,11 +824,12 @@ aud_midi_linux/lib/src/alsa/            ffigen bindings, reader isolate, UMP cli
    (`MidiSession`, `MidiEndpointConnection`, UMP native, scheduling,
    virtual device, function blocks); `DeviceWatcher` /
    `MidiEndpointDeviceWatcher`.
-7. BLE-MIDI codec (pure Dart, MIDI 1.0 byte framing) + Apple BLE
-   (CoreBluetooth + activation) + Linux BLE over `bluez`; Apple network
+7. BLE-MIDI codec (pure Dart, MIDI 1.0 byte framing, central and
+   peripheral role) + Apple BLE central and peripheral
+   (CoreBluetooth + activation) + Linux BLE over `bluez` (central and GATT server); Apple network
    session.
-8. Android BLE scan, `MidiDeviceService` and `MidiUmpDeviceService`,
-   `NsdManager`; Windows pairing API.
+8. Android BLE scan and GATT server advertising, `MidiDeviceService` and `MidiUmpDeviceService`,
+   `NsdManager`; Windows pairing API and `GattServiceProvider` peripheral.
 9. Create `aud_midi_rtp`: RFC 6295 as its own codec package (no
    sockets), MIDI 1.0 on the wire:
    - RTP payload per section 3: command section header (B, J, Z, P,
@@ -825,7 +870,7 @@ aud_midi_linux/lib/src/alsa/            ffigen bindings, reader isolate, UMP cli
     `_midi2._udp`, invitation/bye, ping, UMP data commands with FEC and
     retransmission, optional authentication; pure Dart on all io
     platforms, WMS transport used when present.
-13. Later: BLE peripheral, Web Bluetooth, MIDI thru/routing, MIDI-CI
+13. Later: Web Bluetooth, MIDI thru/routing, MIDI-CI
     profiles and property exchange.
 
 ### Verification of each later step
@@ -897,7 +942,7 @@ aud_midi_linux/lib/src/alsa/            ffigen bindings, reader isolate, UMP cli
 
 Nothing else changes: no code, no pubspec, no CHANGELOG, no new repos yet
 (they are created in the implementation tickets). Open points the post
-lists: minSdk 24 vs 29, BLE peripheral, Windows MIDI Services rollout,
+lists: minSdk 24 vs 29, BLE peripheral pairing and bonding behaviour, Windows MIDI Services rollout,
 BlueZ MIDI profile vs own GATT client on Linux, MIDI-CI scope, how to
 retire `gg_midi_vars` (discontinue vs last re-export version), the name
 `aud_midi_standard`, template README/pubspec description of `aud_midi`
