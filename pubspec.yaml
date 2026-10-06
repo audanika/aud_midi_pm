@@ -1,8 +1,8 @@
-name: audanika_midi_pm
+name: aud_midi_pm
 description: "Project management repo of the Audanika MIDI packages: plans, decisions, blog posts"
 version: 0.0.0
-homepage: https://github.com/audanika/audanika_midi_pm
-repository: https://github.com/audanika/audanika_midi_pm
+homepage: https://github.com/audanika/aud_midi_pm
+repository: https://github.com/audanika/aud_midi_pm
 publish_to: none
 
 environment:

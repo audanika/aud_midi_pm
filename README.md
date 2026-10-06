@@ -1,4 +1,4 @@
-# audanika_midi_pm
+# aud_midi_pm
 
 Project management repository of the Audanika MIDI packages: plans, decisions and architecture. No code.
 

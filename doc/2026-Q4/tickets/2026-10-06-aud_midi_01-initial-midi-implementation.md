@@ -21,7 +21,7 @@ and (added by the user at plan review) Linux under these constraints:
   is the only route — the one inherent exception, to be stated)
 - USB MIDI, BLE MIDI, virtual MIDI and network sessions supported
 
-Deliverable: `audanika_midi_pm/doc/2026-Q4/tickets/2026-10-06-aud_midi_01-initial-midi-implementation.md`
+Deliverable: `aud_midi_pm/doc/2026-Q4/tickets/2026-10-06-aud_midi_01-initial-midi-implementation.md`
 (exists, untracked, 34 bytes: only `# Plan the package implementation`).
 
 Tooling on this machine: Dart 3.13.4, Flutter 3.47.5 stable, `gg` CLI;
@@ -879,7 +879,7 @@ aud_midi_linux/lib/src/alsa/            ffigen bindings, reader isolate, UMP cli
 
 ## Files to write in this ticket
 
-1. `audanika_midi_pm/doc/2026-Q4/tickets/2026-10-06-aud_midi_01-initial-midi-implementation.md` — the post,
+1. `aud_midi_pm/doc/2026-Q4/tickets/2026-10-06-aud_midi_01-initial-midi-implementation.md` — the post,
    replacing the stub, keeping the H1. Sections: Goals; CoreMIDI; Android
    (NDK + JNI); Windows; Linux; Web MIDI; flutter_midi_command; Dart
    interop toolbox; Feature overview table; Concept (architecture diagram
