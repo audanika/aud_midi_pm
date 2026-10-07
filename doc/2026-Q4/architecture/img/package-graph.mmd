@@ -1,7 +1,12 @@
 flowchart BT
-  standard[aud_midi_standard]
+  standard[aud_midi_standard<br/>zero dependencies]
   core[aud_midi_core] --> standard
-  rtp[aud_midi_rtp] --> standard
+  rtp[aud_midi_rtp<br/>RFC 6295] --> standard
   network[aud_midi_network] --> core & rtp
-  backends[apple, android, windows, linux, web] --> core
-  umbrella[aud_midi] --> network & backends
+  apple[aud_midi_apple] --> core
+  android[aud_midi_android] --> core
+  windows[aud_midi_windows] --> core
+  linux[aud_midi_linux] --> core
+  web[aud_midi_web] --> core
+  umbrella[aud_midi] --> network & apple & android & windows & linux & web
+  umbrella --> core & standard

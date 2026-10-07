@@ -914,3 +914,15 @@ separate in `aud_midi_rtp`).
 - `dart analyze` and `dart test` are unaffected (no code change).
 - `gg can commit` in the ticket folder is green; then `/gg-commit` with the
   message from `publish_config.json`.
+
+## Implementation
+
+Implemented in ticket
+[audmidi](2026-10-06-audmidi-implement-aud-midi.md), steps 0 to 12 at
+once. Where the implementation deviates from this plan, the decisions in
+[concepts/decisions](../concepts/decisions/000-index.md) say why — notably
+the umbrella's direct dependency on all backends with the Flutter SDK
+(packaging-001), the dropped legacy CoreMIDI path (apple-001), the `Midi`
+prefix for all types (naming-001) and cancellable OS scheduling
+(scheduling-001). The architecture as built is in
+[architecture.md](../architecture/architecture.md).

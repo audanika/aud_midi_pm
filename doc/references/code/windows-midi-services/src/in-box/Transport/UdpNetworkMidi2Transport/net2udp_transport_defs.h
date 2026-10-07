@@ -1,0 +1,281 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License
+// ============================================================================
+// This is part of the Windows MIDI Services App API and should be used
+// in your Windows application via an official binary distribution.
+// Further information: https://github.com/microsoft/MIDI/
+// ============================================================================
+
+#pragma once
+
+// the IDs here aren't the full Ids, just the values we start with
+// The full Id comes back from the swdevicecreate callback
+
+#define TRANSPORT_LAYER_GUID __uuidof(Midi2NetworkMidiTransport);
+#define MIDI_NETWORK_TRANSPORT_ID                                       L"{c95dcd1f-cde3-4c2d-913c-528cb8a4cbe6}" // for the client API which doesn't know about the internal types here
+
+#define TRANSPORT_MANUFACTURER                                          L"Microsoft"
+#define TRANSPORT_CODE                                                  L"NET2UDP"
+
+// A remote client is identified by the pair the specification gives us for recalling a device:
+// its UMP Endpoint Name and Product Instance Id. Not its address, which moves.
+struct MidiNetworkRemoteClientIdentity
+{
+    std::wstring UmpEndpointName;
+    std::wstring ProductInstanceId;
+
+    bool IsValid() const { return !UmpEndpointName.empty() && !ProductInstanceId.empty(); }
+
+    // Case-insensitive, and separated by a character neither field may contain.
+    std::wstring Key() const
+    {
+        return internal::ToLowerTrimmedWStringCopy(ProductInstanceId) + L"|" +
+            internal::ToLowerTrimmedWStringCopy(UmpEndpointName);
+    }
+};
+
+// One remote client's own settings on a host, used for it instead of the host's. Matched on the
+// identity the same way the allow and deny lists are.
+struct MidiNetworkRemoteClientSettings
+{
+    MidiNetworkRemoteClientIdentity Identity{};
+
+    // a multiple of MIDI 1.0 wire speed, 0 for no limit
+    uint32_t SendSpeedLimit{ 0 };
+    bool ReduceSendSpeedAutomatically{ false };
+};
+
+// What a host sends to one remote client, and whether that came from the client's own settings
+struct MidiNetworkRemoteClientSendSpeed
+{
+    uint32_t SendSpeedLimit{ 0 };
+    bool ReduceSendSpeedAutomatically{ false };
+    bool UsesRemoteClientSettings{ false };
+};
+
+enum MidiNetworkRemoteClientPolicy
+{
+    // accept any remote client without asking anyone
+    PolicyAllowAny = 0,
+
+    // hold the client in a pending state until a user approves or denies it
+    PolicyRequireApproval,
+};
+
+enum MidiNetworkRemoteClientDecision
+{
+    DecisionAllow = 0,
+    DecisionDeny,
+    DecisionRequireApproval,
+};
+
+// Endpoint identity is deliberately role-free. A device which connects in both the Host and the
+// Client role presents identical identity in both (spec section 12), and the spec expects us to
+// recognize that rather than create two unrelated endpoints.
+#define MIDI_NETWORK_ENDPOINT_INSTANCE_ID_PREFIX                        L"MIDIU_NET2UDP_"
+
+// How much of the UMP Endpoint Name is kept in the instance id for readability. The hash which
+// follows it is what actually provides uniqueness.
+#define MIDI_NETWORK_ENDPOINT_INSTANCE_ID_NAME_MAX_CHARS                24
+
+
+#define TRANSPORT_HOST_PARENT_NAME_PREFIX                               L"MIDI 2.0 Network Local Host: "    // TODO: Names should be moved to .rc for localization
+#define TRANSPORT_HOST_PARENT_ID_PREFIX                                 L"MIDIU_NET2UDP_HOST_"
+
+#define TRANSPORT_CLIENT_PARENT_ID                                      L"MIDIU_NET2UDP_TRANSPORT"
+#define TRANSPORT_CLIENT_PARENT_DEVICE_NAME                             L"MIDI 2.0 Network Remote Hosts"    // TODO: Names should be moved to .rc for localization
+
+#define ULTIMATE_PARENT_ROOT                                            L"HTREE\\ROOT\\0"
+#define TRANSPORT_ENUMERATOR                                            L"MIDISRV"
+
+
+#define DNS_PTR_SERVICE_TYPE                                            L"_midi2._udp.local"
+
+// The service instance name is a single DNS label, so it carries the RFC 1035 63 byte limit.
+// Bytes once encoded as UTF-8, not characters.
+#define MIDI_DNSSD_SERVICE_INSTANCE_NAME_MAX_BYTE_COUNT                 63
+
+#define MIDI_UDP_PAYLOAD_HEADER                                         0x4D494449                      // "MIDI" in ASCII
+
+
+#define MIDI_MAX_UMP_WORDS_PER_PACKET                                   64          // spec section 7.1
+
+// Spec section 5.2: "UDP packets should not exceed 1400 bytes". This is our UDP payload, so the
+// IP and UDP headers sit on top of it: 1428 total for IPv4 and 1448 for IPv6, both inside a
+// standard 1500 byte Ethernet MTU. DontFragment is set on the socket, so a datagram larger than
+// the path MTU is dropped outright rather than fragmented.
+#define MIDI_NETWORK_MAX_UDP_PAYLOAD_BYTES                              1400
+
+// NAK payload length counts the original command header word as well, leaving 254 words of text
+#define MIDI_MAX_NAK_MESSAGE_BYTE_COUNT                                 1016        // Spec 6.15 : (254 * sizeof(uint32_t))
+#define MIDI_MAX_BYE_MESSAGE_BYTE_COUNT                                 1020        // Spec 6.16 : (255 * sizeof(uint32_t))
+
+#define MIDI_COMMAND_PAYLOAD_LENGTH_NO_PAYLOAD                          0
+
+#define MIDI_NETWORK_COMMAND_RETRANSMIT_INTERVAL_MS                     1000
+
+// How many times we ask for the same missing packets before accepting the loss and moving on.
+// Spec 7.2.3: a remote which does not implement retransmit NAKs the request, and we must not
+// keep asking. A remote which simply never answers must not be able to wedge the session either.
+#define MIDI_NETWORK_MAX_RETRANSMIT_REQUEST_ATTEMPTS                    3
+
+// Spec 6.4: "The Invitation Command should be sent repeatedly, with a reasonable delay between
+// Invitation Commands, until a reply is received... If the Client considers the Invitation
+// failed, the Client shall terminate the Invitation with a Bye Command with reason 0x80."
+// Retries are driven by the connection watchdog tick, so this is that many ticks.
+#define MIDI_NETWORK_MAX_INVITATION_ATTEMPTS                            5
+
+// Spec 6.8: Invitation Reply: Pending means the host received the invitation but needs time,
+// typically because a person has to approve it on the device. Once we have that reply we stop
+// re-inviting and simply wait, so this timeout is scaled to a human walking over to a device
+// and clicking accept, not to network round trips.
+#define MIDI_NETWORK_INVITATION_PENDING_TIMEOUT_DEFAULT                 120000
+#define MIDI_NETWORK_INVITATION_PENDING_TIMEOUT_UPPER_BOUND             600000
+#define MIDI_NETWORK_INVITATION_PENDING_TIMEOUT_LOWER_BOUND             1000
+
+// Bye 0x40, Too Many Open Sessions, means "not now". Windows also sends it while it still holds
+// this PC's previous session, which it drops after five missed pings.
+#define MIDI_NETWORK_CLIENT_BUSY_RETRY_DELAY_MILLISECONDS               10000
+
+// Spec 6.16: "The Bye Command should be sent repeatedly until a Bye Reply Command is received,
+// or until a timeout occurs." Only the user-initiated disconnect path does this. Shutdown paths
+// send once and move on, because waiting there runs against the service stop timeout and, with
+// many sessions, would multiply.
+#define MIDI_NETWORK_BYE_MAX_ATTEMPTS                                   3
+#define MIDI_NETWORK_BYE_REPLY_TIMEOUT_MILLISECONDS                     500
+
+// Storing a datagram to a socket output stream normally completes immediately. This bound only
+// exists so that a stack or remote which never completes the store cannot hold the writer lock,
+// and with it a session teardown, forever.
+#define MIDI_NETWORK_SEND_TIMEOUT_MILLISECONDS                          2000
+
+// How long shutdown waits for the negotiation thread to leave before abandoning it. Negotiation
+// blocks inside the service and cannot be canceled, so this only has to be long enough for a
+// thread that is not stuck.
+#define MIDI_NETWORK_NEGOTIATION_THREAD_EXIT_TIMEOUT_MILLISECONDS       2000
+
+// An adapter coming up or going away changes several addresses in a row. Hosts limited to an
+// adapter are moved once they settle, rather than restarted for each one.
+#define MIDI_NETWORK_ADAPTER_CHANGE_SETTLE_MILLISECONDS                 2000
+
+// The configuration file is writable by any user, so what it holds about an adapter is capped.
+// Both are far longer than anything Windows produces.
+#define MIDI_NETWORK_ADAPTER_NAME_MAX_CHARS                             256
+#define MIDI_NETWORK_ADAPTER_PHYSICAL_ADDRESS_MAX_CHARS                 64
+
+#define MIDI_NETWORK_FEC_PACKET_COUNT_DEFAULT                           2
+#define MIDI_NETWORK_FEC_PACKET_COUNT_UPPER_BOUND                       10
+#define MIDI_NETWORK_FEC_PACKET_COUNT_LOWER_BOUND                       0
+
+#define MIDI_NETWORK_RETRANSMIT_BUFFER_PACKET_COUNT_DEFAULT             250
+#define MIDI_NETWORK_RETRANSMIT_BUFFER_PACKET_COUNT_UPPER_BOUND         1000
+
+// However many commands the setting allows, the buffer never holds more than this per connection
+#define MIDI_NETWORK_RETRANSMIT_BUFFER_MAX_BYTES                        (256 * 1024)
+
+// Spec 7.2.3: a request repeated before it has been served may be ignored. Past this many waiting,
+// further ones are too, and the remote asks again.
+#define MIDI_NETWORK_MAX_PENDING_RETRANSMIT_REQUESTS                    16
+
+// A remote asking again and again for data which is gone gets one Retransmit Error for the same
+// sequence number in this time, and no more than so many a second in all
+#define MIDI_NETWORK_RETRANSMIT_ERROR_REPEAT_MILLISECONDS               250
+#define MIDI_NETWORK_RETRANSMIT_ERROR_MAX_PER_SECOND                    20
+
+// With a speed limit, the send queue holds about this much time at that speed before senders
+// wait for room, so a message sent behind a burst is not held up behind a long queue
+#define MIDI_NETWORK_SEND_QUEUE_PACED_MILLISECONDS                      100
+#define MIDI_NETWORK_SEND_QUEUE_PACED_MINIMUM_WIRE_BYTES                256
+
+// Without one, senders only wait when the socket itself has fallen this far behind
+#define MIDI_NETWORK_SEND_QUEUE_UNLIMITED_MAX_WORDS                     (64 * 1024)
+
+// A sender waits for room at most this long, then its messages are queued anyway. Kept under the
+// 1 second an app's side of the service pipe waits, so the app never sees a stall.
+#define MIDI_NETWORK_SEND_QUEUE_WAIT_LIMIT_MILLISECONDS                 900
+#define MIDI_NETWORK_SEND_QUEUE_WAIT_SLICE_MILLISECONDS                 50
+
+// Only reached when nothing is draining the queue. Messages past this are dropped, with a trace.
+#define MIDI_NETWORK_SEND_QUEUE_HARD_MAX_WORDS                          (256 * 1024)
+
+
+// Where a configured host or client entry is in its life. This replaced a bare "Created" flag,
+// which could not distinguish "not started yet" from "started and lost" from "gave up", so every
+// new scenario needed another flag alongside it. Only TransportState changes these, so the legal
+// transitions live in one place.
+enum class MidiNetworkEntryState
+{
+    // waiting for the endpoint creator worker to build it
+    Pending,
+
+    // built and registered
+    Live,
+
+    // The definition itself is bad, or the remote refused it, so retrying can only fail the same
+    // way. Terminal until the configuration changes or the app asks again.
+    Failed,
+
+    // Reachability gave out and nothing will announce its return, so it is only retried when the
+    // app asks again. Not set at present: a direct connection is tried again after the scan
+    // interval instead.
+    Unavailable,
+};
+#define MIDI_NETWORK_RETRANSMIT_BUFFER_PACKET_COUNT_LOWER_BOUND         0
+
+#define MIDI_NETWORK_OUTBOUND_PING_INTERVAL_DEFAULT                     2000
+#define MIDI_NETWORK_OUTBOUND_PING_INTERVAL_UPPER_BOUND                 120000
+#define MIDI_NETWORK_OUTBOUND_PING_INTERVAL_LOWER_BOUND                 250
+
+#define MIDI_NETWORK_DIRECT_CONNECTION_SCAN_INTERVAL_DEFAULT            20000       // longest wait between scans, and the wait before a direct connection is tried again
+#define MIDI_NETWORK_DIRECT_CONNECTION_SCAN_INTERVAL_UPPER_BOUND        300000
+#define MIDI_NETWORK_DIRECT_CONNECTION_SCAN_INTERVAL_LOWER_BOUND        250
+
+// Connecting to a remote host resolves a name and can stall with no timeout of its own. Client
+// startup runs on the shared background worker, so one unreachable host would otherwise hold up
+// every other configured client behind it.
+#define MIDI_NETWORK_CLIENT_CONNECT_TIMEOUT_MILLISECONDS                5000
+
+#define MIDI_NETWORK_STARTING_OUTBOUND_UMP_QUEUE_CAPACITY               50
+
+// UDP drops a datagram that arrives while the socket's receive buffer is full, and a dropped
+// datagram costs a retransmit request and a round trip. Packets are handled one at a time, so a
+// burst waits here. Measured with 8 remotes bursting into one socket: the 64 KB default lost 55%
+// to 93% of packets, and 1 MB lost none of a 512 KB burst. Must be set before the socket binds.
+#define MIDI_NETWORK_SOCKET_RECEIVE_BUFFER_BYTES                        (1024 * 1024)
+
+// How often each endpoint's measured latency is written to it. The scheduler reads it when an
+// app opens the endpoint, so this only has to keep it roughly current.
+#define MIDI_NETWORK_LATENCY_REFRESH_INTERVAL_MILLISECONDS              5000
+
+// Upper bound on simultaneous remote clients for a single host. Datagram source addresses are
+// trivially forged, so without a cap a single sender can make us allocate connections and
+// threads without limit. The default is user-configurable, but never above the absolute max:
+// each connection currently costs two threads, so this is a real resource decision.
+#define MIDI_NETWORK_HOST_MAX_CONNECTIONS_DEFAULT                       64
+#define MIDI_NETWORK_HOST_MAX_CONNECTIONS_LOWER_BOUND                   1
+#define MIDI_NETWORK_HOST_MAX_CONNECTIONS_ABSOLUTE_MAX                  512
+
+// Remote clients one host keeps their own settings for. The list comes from a file anyone can edit.
+#define MIDI_NETWORK_HOST_MAX_REMOTE_CLIENT_SETTINGS                    256
+
+// A connection with no session and no traffic for this long is reclaimed. Remote clients
+// normally reconnect from a new ephemeral source port, so without this the connection map grows
+// by one object and two threads on every reconnect.
+#define MIDI_NETWORK_CONNECTION_IDLE_RECLAIM_MILLISECONDS               30000
+
+#define MIDI_NETWORK_MIDI_CREATE_MIDI1_PORTS_DEFAULT                    true
+
+// A UMP endpoint addresses sixteen groups.
+#define MIDI_NETWORK_MIDI_GROUP_COUNT                                   16
+
+// header sized plus a command packet header
+#define MINIMUM_VALID_UDP_PACKET_SIZE (sizeof(uint32_t) * 2)
+
+
+
+
+enum MidiNetworkConnectionRole
+{
+    ConnectionWindowsIsHost,
+    ConnectionWindowsIsClient,
+};
