@@ -7,7 +7,7 @@ the decisions are in [concepts/decisions](../concepts/decisions/000-index.md).
 
 ## Packages
 
-Ten packages, one repo each in `github.com/audanika`. Diagram:
+Ten packages, one repo each in `github.com/audmidi`. Diagram:
 [img/package-graph.mmd](img/package-graph.mmd).
 
 | Package | Role | Native code | Depends on |
