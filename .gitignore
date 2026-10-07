@@ -15,3 +15,7 @@ build
 .gg/gg-publish.json
 .gg/pubspec_overrides_backup.yaml
 .gg/pnpm_workspace_backup.yaml
+
+# MIDI Association / AMEI specifications may not be reproduced without
+# written permission; kept locally only, see doc/references/README.md.
+doc/references/midi-association/
