@@ -14,6 +14,8 @@
 - Document the aud_midi implementation
 - Reference the aud_midi packages on pub.dev and the audmidi organization
 - Point the architecture to the audmidi organization
+- Plan BLE peripheral support
+- Merge main
 
 ## 0.0.0 - 2026-10-06
 
